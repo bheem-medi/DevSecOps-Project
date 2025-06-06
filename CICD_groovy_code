@@ -1,0 +1,72 @@
+pipeline {
+    agent{
+        node{
+            label 'dev'
+        }
+    }
+    tools{
+        nodejs 'node16'
+    }
+    environment{
+        SCANNER_HOME=tool 'mysonarqube'
+    }
+    stages {
+        stage('Code') {
+            steps {
+                git 'https://github.com/devops0014/devsecops-project.git'
+            }
+        }
+        stage("Sonarqube Analysis") {
+            steps{
+                withSonarQubeEnv('mysonarqube') {
+                        sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=camp \
+                        -Dsonar.projectKey=camp '''
+                }
+            }
+        }
+        stage ("Quality Gates") {
+            steps {
+                script {
+                    waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
+                }
+            }
+        }
+        stage ('Dockerfile') {
+            steps {
+                sh 'docker build -t appimage .'
+            }
+        }
+        stage ('Scan Image'){
+            steps{
+                sh 'trivy image appimage'
+            }
+        }
+        stage ("TagImage"){
+            steps{
+                sh 'docker tag appimage bheem05/devproject:dev-campevent'
+            }
+        }
+        stage ('PushImage'){
+            steps{
+                script {
+                    withDockerRegistry(credentialsId: 'dockerhub') {
+                        sh 'docker push bheem05/devproject:dev-campevent'
+                    }
+                
+                }
+            }
+        }
+        stage ('Deploy'){
+            steps {
+                sh 'docker run -itd --name dev-conatainer2 -p 6666:3000 bheem05/devproject:dev-campevent'
+            }
+        }
+         
+     }
+     post{
+         always{
+            echo 'Slack Notification'
+            slackSend (channel: 'all-devopsproject', message: "*${currentBuild.currentResult}:* Job ${env.JOB_NAME} \n build ${env.BUILD_NUMBER} \n More info at: ${env.BUILD_URL}")
+         }
+    }
+}
